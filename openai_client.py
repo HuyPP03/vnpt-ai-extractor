@@ -100,7 +100,7 @@ class OpenAIClient:
         Returns:
             Response content string.
         """
-        model = model or self.config.get("model", "GPT-5-mini")
+        model = model or self.config.get("model", "gpt-4o-mini")
 
         response = self.client.chat.completions.create(
             model=model, messages=[{"role": "user", "content": message}], **kwargs
@@ -111,6 +111,43 @@ class OpenAIClient:
             return content if content is not None else ""
 
         return ""
+    
+    def get_completion(
+        self, content: str, temperature: float = 0.1, 
+        max_completion_tokens: int = 100, model: Optional[str] = None, **kwargs
+    ) -> Optional[str]:
+        """
+        Get completion - compatible interface with VNPT AI client.
+        
+        Args:
+            content: Input prompt/message
+            temperature: Sampling temperature
+            max_completion_tokens: Maximum tokens in response
+            model: Model name (optional)
+            **kwargs: Additional parameters
+            
+        Returns:
+            Response text or None on error
+        """
+        try:
+            model = model or self.config.get("model", "gpt-4o-mini")
+            
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": content}],
+                temperature=temperature,
+                max_tokens=max_completion_tokens,
+                **kwargs
+            )
+            
+            if hasattr(response, "choices") and len(response.choices) > 0:
+                content = response.choices[0].message.content
+                return content if content is not None else ""
+            
+            return None
+        except Exception as e:
+            print(f"OpenAI API Error: {e}")
+            return None
 
     def chat_completions_advanced(
         self, messages: List[Dict[str, str]], model: Optional[str] = None, **kwargs
@@ -134,11 +171,15 @@ class OpenAIClient:
 
     def get_model(self) -> str:
         """Get the configured model name."""
-        return self.config.get("model", "GPT-5-mini")
+        return self.config.get("model", "gpt-4o-mini")
 
     def get_base_url(self) -> str:
         """Get the configured base URL."""
         return self.config.get("base_url", "")
+    
+    def set_model(self, model: str):
+        """Set the model to use."""
+        self.config["model"] = model
 
 
 # Convenience function for simple use cases
