@@ -1,0 +1,7 @@
+{
+  "openai": {
+    "base_url": "xxxxxxxxxxx",
+    "api_key": "xxxxxxxxxxxxxxxx",
+    "model": "xxxxxxxxxxxxx"
+  }
+}
