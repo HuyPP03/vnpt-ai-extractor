@@ -21,9 +21,14 @@ class StandardPipeline:
         model_type: str = "large",
         use_safety_filter: bool = False,
         use_context_filter: bool = True,
+        safety_mode: str = "none",
     ):
         self.model_type = model_type.lower()
-        self.use_safety_filter = use_safety_filter
+        self.safety_mode = safety_mode
+        # Backward compatibility: nếu use_safety_filter=True, dùng keyword mode
+        if use_safety_filter and safety_mode == "none":
+            self.safety_mode = "keyword"
+        self.use_safety_filter = self.safety_mode != "none"
         self.use_context_filter = use_context_filter
 
         # Initialize model

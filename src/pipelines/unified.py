@@ -20,6 +20,7 @@ class UnifiedPipeline:
         large_model: str = "large",
         small_model: str = "small",
         use_improved_prompts: bool = True,
+        safety_mode: str = "none",
     ):
 
         self.strategy = strategy
@@ -27,6 +28,7 @@ class UnifiedPipeline:
         self.large_model = large_model
         self.small_model = small_model
         self.use_improved_prompts = use_improved_prompts
+        self.safety_mode = safety_mode
 
         # Initialize pipeline
         self.pipeline = self._create_pipeline()
@@ -45,6 +47,7 @@ class UnifiedPipeline:
             return StandardPipeline(
                 model_type=self._resolve_model_name(self.large_model),
                 use_context_filter=True,
+                safety_mode=self.safety_mode,
             )
         else:
             strategy_map = {
@@ -57,6 +60,7 @@ class UnifiedPipeline:
                 use_improved_prompts=self.use_improved_prompts,
                 large_model_name=self._resolve_model_name(self.large_model),
                 small_model_name=self._resolve_model_name(self.small_model),
+                safety_mode=self.safety_mode,
             )
 
     def _resolve_model_name(self, model: str) -> str:

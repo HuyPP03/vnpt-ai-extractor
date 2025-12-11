@@ -2,6 +2,7 @@ import argparse
 
 from src.pipelines import UnifiedPipeline
 
+
 def main():
     """Main function với argument parsing"""
     parser = argparse.ArgumentParser(
@@ -10,10 +11,10 @@ def main():
         epilog="""
 Examples:
   # Baseline với VNPT large model
-  python main.py --strategy baseline --provider vnpt --large-model large --input ../data/val.json
+  python main.py --strategy baseline --provider vnpt --large-model large --input data/val.json
   
   # Hybrid với VNPT models
-  python main.py --strategy hybrid --provider vnpt --input ../data/val.json
+  python main.py --strategy hybrid --provider vnpt --input data/val.json
   
   # Hybrid với OpenAI models
   python main.py --strategy hybrid --provider openai --large-model gpt-4o-mini --small-model gpt-3.5-turbo
@@ -22,10 +23,16 @@ Examples:
   python main.py --strategy cost-optimized --max-questions 50
   
   # Quality-optimized strategy với verbose
-  python main.py --strategy quality-optimized --verbose --input ../data/val.json
+  python main.py --strategy quality-optimized --verbose --input data/val.json
   
   # Save predictions
   python main.py --strategy hybrid --save-predictions
+  
+  # Enable safety classifier (keyword mode - fast)
+  python main.py --strategy hybrid --safety-mode keyword
+  
+  # Enable safety classifier (model mode - accurate)
+  python main.py --strategy hybrid --safety-mode model
         """,
     )
 
@@ -107,6 +114,15 @@ Examples:
         "--no-improved-prompts", action="store_true", help="Disable improved prompts"
     )
 
+    # Safety arguments
+    parser.add_argument(
+        "--safety-mode",
+        type=str,
+        default="none",
+        choices=["none", "keyword", "model"],
+        help="Safety check mode: none (disabled), keyword (fast), model (accurate) (default: none)",
+    )
+
     args = parser.parse_args()
 
     # Set default models for OpenAI
@@ -123,6 +139,7 @@ Examples:
         large_model=args.large_model,
         small_model=args.small_model,
         use_improved_prompts=not args.no_improved_prompts,
+        safety_mode=args.safety_mode,
     )
 
     # Run evaluation

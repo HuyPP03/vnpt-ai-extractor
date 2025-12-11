@@ -23,21 +23,21 @@ class SafetyClassifier:
     @staticmethod
     def has_unsafe_answer(choices: List[str]) -> Optional[str]:
         labels = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
-        
+
         for i, choice in enumerate(choices):
             choice_lower = choice.lower()
             for keyword in SafetyClassifier.UNSAFE_KEYWORDS:
                 if keyword in choice_lower:
                     return labels[i] if i < len(labels) else None
-        
+
         return None
 
     @staticmethod
     def build_safety_prompt(question: str, choices: List[str]) -> str:
-        from utils.format_choices import DynamicChoicesFormatter
-        
+        from src.utils import DynamicChoicesFormatter
+
         choices_text = DynamicChoicesFormatter.format_choices(choices)
-        
+
         return f"""Bạn là một hệ thống phân loại an toàn nội dung. Nhiệm vụ của bạn là xác định câu hỏi có an toàn hay không.
 
 CÂU HỎI UNSAFE (không an toàn) là câu hỏi có một hoặc nhiều đặc điểm sau:
@@ -93,24 +93,24 @@ Hãy phân tích kỹ câu hỏi và trả lời CHÍNH XÁC một trong hai t�
     def extract_safety_label(response: str) -> Optional[str]:
         """
         Trích xuất SAFE/UNSAFE từ response
-        
+
         Args:
             response: Response từ model
-            
+
         Returns:
             "SAFE" hoặc "UNSAFE" hoặc None
         """
         if not response:
             return None
-        
+
         response_upper = response.upper().strip()
-        
+
         # Direct match
         if "UNSAFE" in response_upper:
             return "UNSAFE"
         elif "SAFE" in response_upper:
             return "SAFE"
-        
+
         return None
 
     @staticmethod
@@ -119,22 +119,22 @@ Hãy phân tích kỹ câu hỏi và trả lời CHÍNH XÁC một trong hai t�
         choices: List[str],
         model_wrapper=None,
         verbose: bool = False,
-        use_model_verification: bool = False
+        use_model_verification: bool = False,
     ) -> Dict[str, Any]:
         """
         Phân loại câu hỏi SAFE/UNSAFE
-        
+
         Logic:
         - Nếu trong choices có đáp án chứa "không thể trả lời" → UNSAFE, chọn đáp án đó
         - Nếu không có → SAFE, tiếp tục pipeline bình thường
-        
+
         Args:
             question: Câu hỏi
             choices: Danh sách lựa chọn
             model_wrapper: ModelWrapper instance (optional, chỉ dùng nếu use_model_verification=True)
             verbose: In chi tiết
             use_model_verification: Có dùng model để verify không (mặc định: False)
-            
+
         Returns:
             Dictionary với keys:
                 - is_safe: bool
@@ -144,7 +144,7 @@ Hãy phân tích kỹ câu hỏi và trả lời CHÍNH XÁC một trong hai t�
         """
         # Kiểm tra nhanh bằng keyword matching
         unsafe_answer = SafetyClassifier.has_unsafe_answer(choices)
-        
+
         if unsafe_answer is None:
             # Không có đáp án unsafe trong choices → SAFE
             return {
@@ -152,54 +152,56 @@ Hãy phân tích kỹ câu hỏi và trả lời CHÍNH XÁC một trong hai t�
                 "unsafe_answer": None,
                 "confidence": 1.0,
                 "method": "no_unsafe_choice",
-                "raw_response": None
+                "raw_response": None,
             }
-        
+
         # Có đáp án unsafe trong choices
         if verbose:
-            print(f"⚠️ Detected unsafe answer in choices: {unsafe_answer} - '{choices[ord(unsafe_answer) - ord('A')]}'")
-        
+            print(
+                f"⚠️ Detected unsafe answer in choices: {unsafe_answer} - '{choices[ord(unsafe_answer) - ord('A')]}'"
+            )
+
         # Nếu không dùng model verification → chọn luôn đáp án unsafe
         if not use_model_verification:
             if verbose:
                 print(f"✅ Auto-selecting unsafe answer: {unsafe_answer}")
-            
+
             return {
                 "is_safe": False,
                 "unsafe_answer": unsafe_answer,
                 "confidence": 0.95,
                 "method": "keyword_direct",
-                "raw_response": None
+                "raw_response": None,
             }
-        
+
         # Nếu dùng model verification → hỏi model xem câu hỏi có thực sự UNSAFE không
         if verbose:
             print("🔍 Using small model to verify if question is truly unsafe...")
-        
+
         try:
             if model_wrapper is None:
-                raise ValueError("model_wrapper is required when use_model_verification=True")
-            
+                raise ValueError(
+                    "model_wrapper is required when use_model_verification=True"
+                )
+
             prompt = SafetyClassifier.build_safety_prompt(question, choices)
-            
+
             response = model_wrapper.get_completion(
-                prompt=prompt,
-                temperature=0.1,
-                max_tokens=10
+                prompt=prompt, temperature=0.1, max_tokens=10
             )
-            
+
             if verbose:
                 print(f"Safety classification response: {response}")
-            
+
             safety_label = SafetyClassifier.extract_safety_label(response)
-            
+
             if safety_label == "UNSAFE":
                 return {
                     "is_safe": False,
                     "unsafe_answer": unsafe_answer,
                     "confidence": 0.9,
                     "method": "model_verified_unsafe",
-                    "raw_response": response
+                    "raw_response": response,
                 }
             else:
                 # Model nói SAFE → câu hỏi bình thường, không chọn unsafe answer
@@ -210,13 +212,13 @@ Hãy phân tích kỹ câu hỏi và trả lời CHÍNH XÁC một trong hai t�
                     "unsafe_answer": None,
                     "confidence": 0.8,
                     "method": "model_verified_safe",
-                    "raw_response": response
+                    "raw_response": response,
                 }
-        
+
         except Exception as e:
             if verbose:
                 print(f"⚠️ Safety classification failed: {e}")
-            
+
             # Fallback: nếu có keyword unsafe → coi như unsafe
             return {
                 "is_safe": False,
@@ -224,6 +226,5 @@ Hãy phân tích kỹ câu hỏi và trả lời CHÍNH XÁC một trong hai t�
                 "confidence": 0.7,
                 "method": "keyword_fallback",
                 "raw_response": None,
-                "error": str(e)
+                "error": str(e),
             }
-

@@ -1,7 +1,14 @@
 from typing import Dict, Any, List
 
-from src.components import AnswerExtractor, ModelWrapper, QuestionClassifier, SafetyClassifier, SemanticContextFilter
-from src.utils import DynamicChoicesFormatter
+from src.components import (
+    AnswerExtractor,
+    ModelWrapper,
+    QuestionClassifier,
+    SafetyClassifier,
+    SemanticContextFilter,
+)
+from src.utils import (DynamicChoicesFormatter, QuestionDifficulty)
+
 try:
     from src.components import PromptSelector
 
@@ -49,34 +56,6 @@ class ConfidenceScorer:
         return max(0.0, min(1.0, confidence))
 
 
-class QuestionDifficulty:
-    """Phân loại độ khó của câu hỏi"""
-
-    PRECISION_CRITICAL = "precision-critical"  # Không được trả lời
-    COMPULSORY = "compulsory"  # Bắt buộc đúng
-    NORMAL = "normal"  # Câu thường
-
-    @classmethod
-    def classify_difficulty(cls, item: Dict[str, Any]) -> str:
-
-        # Kiểm tra metadata
-        if "category" in item:
-            category = item["category"].lower()
-            if "không được trả lời" in category:
-                return cls.PRECISION_CRITICAL
-            elif "bắt buộc" in category or "compulsory" in category:
-                return cls.COMPULSORY
-
-        # Kiểm tra qid pattern (nếu có quy ước)
-        qid = item.get("qid", "")
-        if "critical" in qid.lower():
-            return cls.PRECISION_CRITICAL
-        elif "comp" in qid.lower():
-            return cls.COMPULSORY
-
-        return cls.NORMAL
-
-
 class HybridModelSelector:
 
     @staticmethod
@@ -110,10 +89,7 @@ class HybridModelSelector:
         elif question_type == "CONTEXT":
             return "small"  # Context đã filter, small đủ
         elif question_type == "KNOWLEDGE":
-            if difficulty == "compulsory":
-                return "large"
-            else:
-                return "small"
+            return difficulty
         return "small"
 
     @staticmethod
@@ -139,7 +115,7 @@ class HybridModelSelector:
 
         # KNOWLEDGE: Dựa vào độ khó
         elif question_type == "KNOWLEDGE":
-            if difficulty in ["compulsory", "precision-critical"]:
+            if difficulty == "large":
                 return "large"
             else:
                 return "small_with_fallback"
@@ -158,6 +134,7 @@ class HybridPipeline:
         use_improved_prompts: bool = True,
         large_model_name: str = "large",
         small_model_name: str = "small",
+        safety_mode: str = "none",
     ):
         """
         Args:
@@ -168,6 +145,10 @@ class HybridPipeline:
             use_improved_prompts: Sử dụng improved prompts (mặc định: True)
             large_model_name: Tên large model (default: "large" cho VNPT, "gpt-4o-mini" cho OpenAI)
             small_model_name: Tên small model (default: "small" cho VNPT, "gpt-3.5-turbo" cho OpenAI)
+            safety_mode: Chế độ safety check
+                        - "none": Tắt safety check (mặc định)
+                        - "keyword": Dùng keyword matching (nhanh)
+                        - "model": Dùng model verification (chính xác)
         """
         self.strategy = strategy
         self.use_improved_prompts = use_improved_prompts and USE_IMPROVED_PROMPTS
@@ -175,6 +156,7 @@ class HybridPipeline:
         self.small_model_name = small_model_name
         self.small_model = None  # Lazy loading
         self.large_model = None  # Lazy loading
+        self.safety_mode = safety_mode
 
         self.classifier = QuestionClassifier()
         self.context_filter = SemanticContextFilter()
@@ -227,44 +209,53 @@ class HybridPipeline:
             print(f"QID: {qid}")
             print(f"Question: {question[:100]}...")
 
-        # 0. Safety check - Kiểm tra có đáp án "không thể trả lời" trong choices không
-        safety_result = self.safety_classifier.classify_safety(
-            question=question,
-            choices=choices,
-            model_wrapper=None,  # Không cần model, chỉ keyword matching
-            verbose=verbose,
-            use_model_verification=False  # Không verify, chọn luôn nếu có keyword
-        )
-        
-        if not safety_result["is_safe"]:
-            # Có đáp án unsafe trong choices → chọn luôn đáp án đó
-            if verbose:
-                print("⚠️ UNSAFE answer detected in choices!")
-                print(f"Auto-selecting answer: {safety_result['unsafe_answer']}")
-            
-            self.stats["safety_detected"] += 1
-            # Không tăng small_used vì không gọi model
-            self.stats["total_processed"] += 1
-            
-            result = {
-                "qid": qid,
-                "predicted": safety_result["unsafe_answer"],
-                "raw_response": f"UNSAFE: {safety_result.get('raw_response', 'keyword_detected')}",
-                "model_used": "safety_classifier",
-                "confidence": safety_result["confidence"],
-                "ground_truth": ground_truth,
-                "type": "UNSAFE",
-                "difficulty": "safety",
-                "extraction_failed": False,
-                "safety_method": safety_result["method"]
-            }
-            
-            if ground_truth:
-                result["correct"] = (result["predicted"] == ground_truth)
-            else:
-                result["correct"] = None
-            
-            return result
+        # 0. Safety check - Chỉ chạy nếu safety_mode != "none"
+        if self.safety_mode != "none":
+            # Xác định có dùng model verification không
+            use_model_verification = self.safety_mode == "model"
+
+            # Nếu dùng model verification, cần model_wrapper
+            model_wrapper = None
+            if use_model_verification:
+                model_wrapper = self._get_model("small")
+
+            safety_result = self.safety_classifier.classify_safety(
+                question=question,
+                choices=choices,
+                model_wrapper=model_wrapper,
+                verbose=verbose,
+                use_model_verification=use_model_verification,
+            )
+
+            if not safety_result["is_safe"]:
+                # Có đáp án unsafe trong choices → chọn luôn đáp án đó
+                if verbose:
+                    print("⚠️ UNSAFE answer detected in choices!")
+                    print(f"Auto-selecting answer: {safety_result['unsafe_answer']}")
+
+                self.stats["safety_detected"] += 1
+                # Không tăng small_used vì không gọi model
+                self.stats["total_processed"] += 1
+
+                result = {
+                    "qid": qid,
+                    "predicted": safety_result["unsafe_answer"],
+                    "raw_response": f"UNSAFE: {safety_result.get('raw_response', 'keyword_detected')}",
+                    "model_used": "safety_classifier",
+                    "confidence": safety_result["confidence"],
+                    "ground_truth": ground_truth,
+                    "type": "UNSAFE",
+                    "difficulty": "safety",
+                    "extraction_failed": False,
+                    "safety_method": safety_result["method"],
+                }
+
+                if ground_truth:
+                    result["correct"] = result["predicted"] == ground_truth
+                else:
+                    result["correct"] = None
+
+                return result
 
         # 1. Phân loại câu hỏi
         classification = self.classifier.classify(question)
