@@ -13,10 +13,6 @@ from pathlib import Path
 
 
 class OptimizedModelEvaluator:
-    """
-    Advanced Model Evaluator với pipeline tối ưu
-    Tự động phân loại và xử lý câu hỏi theo loại
-    """
 
     def __init__(
         self,
@@ -24,11 +20,6 @@ class OptimizedModelEvaluator:
         use_safety_filter: bool = False,
         use_context_filter: bool = True,
     ):
-        """
-        Args:
-            model_type: 'small', 'large', or 'openai'
-            use_safety_filter: Có sử dụng safety filter không
-        """
         self.model_type = model_type.lower()
         self.use_safety_filter = use_safety_filter
         self.use_context_filter = use_context_filter
@@ -66,7 +57,6 @@ class OptimizedModelEvaluator:
         }
 
     def safety_check(self, question: str) -> bool:
-        """Kiểm tra an toàn của câu hỏi"""
         if not self.use_safety_filter or not self.safety_model:
             return True
 
@@ -85,7 +75,6 @@ Trả lời chỉ một từ:"""
     def process_single(
         self, item: Dict[str, Any], verbose: bool = False
     ) -> Dict[str, Any]:
-        """Xử lý một câu hỏi"""
         start_time = time.time()
 
         qid = item.get("qid", "unknown")
@@ -245,22 +234,7 @@ Trả lời chỉ một từ:"""
         save_predictions: bool = False,
         output_dir: str = ".",
     ) -> Dict[str, Any]:
-        """
-        Đánh giá toàn bộ dataset
 
-        Args:
-            file_path: Đường dẫn file JSON
-            max_questions: Số câu hỏi tối đa (None = all)
-            start_index: Index bắt đầu
-            end_index: Index kết thúc
-            verbose: In chi tiết
-            save_results: Lưu kết quả
-            save_predictions: Lưu predictions vào CSV
-            output_dir: Thư mục output
-
-        Returns:
-            Evaluation summary
-        """
         print(f"Loading questions from {file_path}...")
 
         # Load data
