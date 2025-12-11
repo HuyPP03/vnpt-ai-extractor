@@ -1,98 +1,118 @@
 from src.utils import DynamicChoicesFormatter
 from typing import List
+import re
 
 
 class ImprovedPromptBuilder:
 
     @staticmethod
     def build_context_prompt(context: str, question: str, choices: List[str]) -> str:
-        """Prompt cho câu hỏi đọc hiểu - đã tối ưu tốt (100% accuracy)"""
+
         choices_text = DynamicChoicesFormatter.format_choices(choices)
         valid_labels = DynamicChoicesFormatter.get_valid_labels(choices)
 
-        return f"""<instruction>
-Bạn là trợ lý AI chuyên phân tích văn bản. Trả lời câu hỏi trắc nghiệm CHỈ DỰA TRÊN đoạn văn bản được cung cấp.
-QUY TẮC:
-- Không sử dụng kiến thức bên ngoài
-- Nếu văn bản không chứa đáp án, suy luận logic từ dữ kiện có sẵn
-- Chỉ chọn một đáp án từ: {', '.join(valid_labels)}
-</instruction>
+        return f"""Bạn là trợ lý AI chuyên phân tích văn bản. Trả lời câu hỏi trắc nghiệm CHỈ DỰA TRÊN đoạn văn bản.
+
 <context>
 {context}
 </context>
+
 <question>
 {question}
 </question>
+
 <choices>
 {choices_text}
 </choices>
-Hãy chỉ trả lời bằng chữ cái ({', '.join(valid_labels)}) tương ứng với đáp án đúng nhất. Không giải thích thêm.
+
+QUAN TRỌNG: Chỉ dựa vào văn bản. Suy luận trong đầu, KHÔNG ĐƯỢC giải thích. Chỉ trả lời DUY NHẤT MỘT chữ cái từ: {', '.join(valid_labels)}
+
+Ví dụ đúng: "B" hoặc "A"
+KHÔNG ĐƯỢC: "1. Phân tích..." hoặc "Vì..."
+
 Đáp án:"""
 
     @staticmethod
     def build_math_prompt_improved(question: str, choices: List[str]) -> str:
-        """
-        Prompt cải tiến cho câu hỏi toán học - Tối ưu token
-        """
+
         choices_text = DynamicChoicesFormatter.format_choices(choices)
         valid_labels = DynamicChoicesFormatter.get_valid_labels(choices)
 
         return f"""Bạn là chuyên gia Toán - Lý - Hóa. Giải bài toán chính xác.
+
 {question}
+
 {choices_text}
-Giải theo bước:
-1. Dữ kiện: [liệt kê ngắn gọn]
-2. Công thức: [ghi công thức ngắn gọn]
-3. Tính: [từng bước ngắn gọn]
-4. Kiểm tra: [xem kết quả hợp lý không]
-Đáp án: [GHI DUY NHẤT MỘT CHỮ CÁI từ {', '.join(valid_labels)}]"""
+
+QUAN TRỌNG: Tính toán trong đầu, KHÔNG ĐƯỢC viết từng bước. Chỉ trả lời DUY NHẤT MỘT chữ cái từ: {', '.join(valid_labels)}
+
+Ví dụ đúng: "C" hoặc "A"
+KHÔNG ĐƯỢC: "Bước 1:..." hoặc "Dữ kiện:..."
+
+Đáp án:"""
 
     @staticmethod
     def build_math_prompt_with_verification(question: str, choices: List[str]) -> str:
-        """
-        Prompt với cơ chế tự kiểm tra cho MATH - Tối ưu token
-        """
+        
         choices_text = DynamicChoicesFormatter.format_choices(choices)
         valid_labels = DynamicChoicesFormatter.get_valid_labels(choices)
 
-        return f"""Giải bài toán chính xác tuyệt đối.
+        return f"""Giải bài toán phức tạp chính xác tuyệt đối.
+
 {question}
+
 {choices_text}
-Giải theo bước:
-1. Dữ kiện và yêu cầu ngắn gọn
-2. Công thức áp dụng chính
-3. Tính toán (từng bước ngắn gọn)
-4. Kiểm tra kết quả
-KẾT LUẬN - Đáp án: [GHI DUY NHẤT MỘT CHỮ CÁI từ {', '.join(valid_labels)}]"""
+
+QUAN TRỌNG: Giải và kiểm tra trong đầu. Nếu thực sự cần, chỉ ghi 1 DÒNG NGẮN nhất về bước quan trọng. Sau đó trả lời DUY NHẤT MỘT chữ cái từ: {', '.join(valid_labels)}
+
+Ví dụ:
+- Tốt nhất: "B"
+- Chấp nhận được: "Áp dụng công thức x=(-b±√Δ)/2a → B"
+- KHÔNG ĐƯỢC: "1. Dữ kiện... 2. Công thức... 3. Tính..."
+
+Đáp án:"""
 
     @staticmethod
     def build_knowledge_prompt_improved(question: str, choices: List[str]) -> str:
+
         choices_text = DynamicChoicesFormatter.format_choices(choices)
         valid_labels = DynamicChoicesFormatter.get_valid_labels(choices)
 
         return f"""Dựa trên kiến thức Văn hóa, Lịch sử, Địa lý, Pháp luật Việt Nam.
+
 {question}
+
 {choices_text}
-Phân tích ngắn và chọn đáp án đúng nhất.
-Đáp án: [GHI DUY NHẤT MỘT CHỮ CÁI từ {', '.join(valid_labels)}]"""
+
+QUAN TRỌNG: Suy luận trong đầu, KHÔNG ĐƯỢC giải thích. Chỉ trả lời DUY NHẤT MỘT chữ cái từ: {', '.join(valid_labels)}
+
+Ví dụ trả lời đúng: "B" hoặc "A" hoặc "C"
+KHÔNG ĐƯỢC trả lời: "1. Phân tích..." hoặc "Đáp án là..."
+
+Đáp án:"""
 
     @staticmethod
     def build_knowledge_prompt_with_confidence(
         question: str, choices: List[str]
     ) -> str:
-        """
-        Prompt với confidence scoring - Tối ưu token
-        """
+        
         choices_text = DynamicChoicesFormatter.format_choices(choices)
         valid_labels = DynamicChoicesFormatter.get_valid_labels(choices)
 
         return f"""Dựa trên kiến thức Văn hóa, Lịch sử, Địa lý, Pháp luật Việt Nam.
+
 {question}
+
 {choices_text}
-Trả lời theo format:
-Lý do: [1 câu ngắn]
-Đáp án: [MỘT CHỮ CÁI từ {', '.join(valid_labels)}]
-Tin cậy: [Cao/Trung bình/Thấp]"""
+
+QUAN TRỌNG: Nếu không chắc chắn, GHI NGẮN lý do (TỐI ĐA 1 câu). Sau đó trả lời DUY NHẤT MỘT chữ cái từ: {', '.join(valid_labels)}
+
+Ví dụ:
+- Tốt nhất: "B"
+- Chấp nhận: "Theo Luật Cư trú 2020 → B"
+- KHÔNG ĐƯỢC: "1. Phân tích đáp án A... 2. Đáp án B..."
+
+Đáp án:"""
 
     @staticmethod
     def detect_math_complexity(question: str) -> str:
@@ -100,7 +120,7 @@ Tin cậy: [Cao/Trung bình/Thấp]"""
         Phát hiện độ phức tạp của câu toán
         Returns: "simple" hoặc "complex"
         """
-        # Indicators of complex math
+        # Complex indicators
         complex_indicators = [
             "tính toán",
             "chứng minh",
@@ -129,9 +149,7 @@ Tin cậy: [Cao/Trung bình/Thấp]"""
         if complex_count >= 2:
             return "complex"
 
-        # Check number of numbers (nhiều số = phức tạp)
-        import re
-
+        # Check number of numbers
         numbers = re.findall(r"\d+[.,]?\d*", question)
         if len(numbers) > 5:
             return "complex"

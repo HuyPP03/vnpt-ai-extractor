@@ -9,6 +9,7 @@ class SemanticContextFilter:
     def __init__(self):
         self.embedding_model = ModelWrapper(model_type="embeddings")
         self._embedding_cache = {}
+        self._embedding_dim = None  # Will be set on first successful embedding
 
     def _get_embedding(self, text: str) -> np.ndarray:
         # Check cache
@@ -16,9 +17,12 @@ class SemanticContextFilter:
             return self._embedding_cache[text]
 
         # Generate embedding
+        embedding = None
+        use_fallback = False
+
         if self.embedding_model is None:
             # Fallback: Simple TF-IDF style embedding
-            embedding = self._simple_embedding(text)
+            use_fallback = True
         else:
             # Use actual embedding model
             try:
@@ -29,15 +33,40 @@ class SemanticContextFilter:
                     # Custom embedding model
                     embedding = self.embedding_model.get_embedding(text)
                 else:
-                    embedding = self._simple_embedding(text)
-            except:
-                embedding = self._simple_embedding(text)
+                    use_fallback = True
+            except Exception as e:
+                print(
+                    f"Warning: Embedding model failed with error: {e}. Using fallback."
+                )
+                use_fallback = True
+
+        # Use fallback if needed
+        if use_fallback or embedding is None:
+            # Determine dimension for fallback
+            if self._embedding_dim is None:
+                # First time - use default
+                embedding = self._simple_embedding(text, dim=1024)
+            else:
+                # Use established dimension
+                embedding = self._simple_embedding(text, dim=self._embedding_dim)
+
+        # Set embedding dimension on first successful embedding
+        if self._embedding_dim is None and embedding is not None:
+            if isinstance(embedding, np.ndarray):
+                self._embedding_dim = embedding.shape[0]
+            elif hasattr(embedding, "__len__"):
+                self._embedding_dim = len(embedding)
+                embedding = np.array(embedding)
+
+        # Ensure embedding is numpy array
+        if not isinstance(embedding, np.ndarray):
+            embedding = np.array(embedding)
 
         # Cache
         self._embedding_cache[text] = embedding
         return embedding
 
-    def _simple_embedding(self, text: str, dim: int = 384) -> np.ndarray:
+    def _simple_embedding(self, text: str, dim: int = 1024) -> np.ndarray:
 
         # Normalize text
         text = text.lower()
@@ -59,6 +88,16 @@ class SemanticContextFilter:
 
     def cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         """Tính cosine similarity giữa 2 vectors"""
+        # Safety check for None values
+        if vec1 is None or vec2 is None:
+            return 0.0
+
+        # Ensure both are numpy arrays
+        if not isinstance(vec1, np.ndarray):
+            vec1 = np.array(vec1)
+        if not isinstance(vec2, np.ndarray):
+            vec2 = np.array(vec2)
+
         dot_product = np.dot(vec1, vec2)
         norm1 = np.linalg.norm(vec1)
         norm2 = np.linalg.norm(vec2)

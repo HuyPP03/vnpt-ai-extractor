@@ -14,6 +14,10 @@ class ModelWrapper:
         "gpt-3.5-turbo-16k",
         "gpt-5-mini",
         "gpt-5",
+        "gemini-2.0-flash",
+        "gemini-2.5-flash",
+        "gemini-1.5-flash",
+        "qwen2.5:3b",
     ]
 
     def __init__(self, model_type: str = "large"):
