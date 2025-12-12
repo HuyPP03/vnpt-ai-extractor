@@ -271,7 +271,7 @@ class HybridPipeline:
             context_length = len(context)
 
             # Apply semantic filtering cho context dài
-            if context_length > 1000:
+            if context_length > 10000:
                 filtered_context, metadata = self.context_filter.filter_context(
                     context=context,
                     question=classification["question"],
@@ -409,7 +409,13 @@ class HybridPipeline:
             )
 
             if not is_valid:
-                predicted = None
+                model = self._get_model('small')
+                response = model.get_completion(
+                    prompt=prompt, temperature=temperature, max_tokens=max_tokens
+                )
+                if verbose:
+                    print(f"Model response (small): {response}")
+                predicted = self.answer_extractor.extract(response, valid_labels)
 
             # Calculate confidence
             confidence = self.confidence_scorer.calculate_confidence(

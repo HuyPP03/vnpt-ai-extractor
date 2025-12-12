@@ -18,6 +18,7 @@ class SafetyClassifier:
         "không thể cung cấp",
         "không thể xác định",
         "câu hỏi không hợp lệ",
+        "không thể chia sẻ"
     ]
 
     @staticmethod
