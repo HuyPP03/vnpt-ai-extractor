@@ -18,6 +18,11 @@ class ModelWrapper:
         "gemini-2.5-flash",
         "gemini-1.5-flash",
         "qwen2.5:3b",
+        "openai/gpt-4o",
+        "openai/gpt-4o-mini",
+        "google/gemini-2.5-flash",
+        "google/gemini-2.5-flash-lite",
+        "google/gemini-2.5-pro",
     ]
 
     def __init__(self, model_type: str = "large"):
@@ -30,7 +35,9 @@ class ModelWrapper:
             if model_type != "openai":
                 self.client.set_model(model_type)
         else:
-            self.client = ClientFactory.create("vnpt", config={"model_type": model_type})
+            self.client = ClientFactory.create(
+                "vnpt", config={"model_type": model_type}
+            )
 
     def _is_openai_model(self, model_type: str) -> bool:
         return model_type.lower() in self.OPENAI_MODELS

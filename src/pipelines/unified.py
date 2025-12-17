@@ -19,16 +19,14 @@ class UnifiedPipeline:
         model_provider: str = "vnpt",
         large_model: str = "large",
         small_model: str = "small",
-        use_improved_prompts: bool = True,
-        safety_mode: str = "none",
+        compulsory_safety_mode: str = "keyword",
     ):
 
         self.strategy = strategy
         self.model_provider = model_provider
         self.large_model = large_model
         self.small_model = small_model
-        self.use_improved_prompts = use_improved_prompts
-        self.safety_mode = safety_mode
+        self.compulsory_safety_mode = compulsory_safety_mode
 
         # Initialize pipeline
         self.pipeline = self._create_pipeline()
@@ -47,7 +45,6 @@ class UnifiedPipeline:
             return StandardPipeline(
                 model_type=self._resolve_model_name(self.large_model),
                 use_context_filter=True,
-                safety_mode=self.safety_mode,
             )
         else:
             strategy_map = {
@@ -57,10 +54,9 @@ class UnifiedPipeline:
             }
             return HybridPipeline(
                 strategy=strategy_map.get(self.strategy, "hybrid"),
-                use_improved_prompts=self.use_improved_prompts,
                 large_model_name=self._resolve_model_name(self.large_model),
                 small_model_name=self._resolve_model_name(self.small_model),
-                safety_mode=self.safety_mode,
+                compulsory_safety_mode=self.compulsory_safety_mode,
             )
 
     def _resolve_model_name(self, model: str) -> str:
@@ -94,9 +90,9 @@ class UnifiedPipeline:
         if self.strategy != "baseline":
             print(f"Large Model: {self.large_model}")
             print(f"Small Model: {self.small_model}")
+            print(f"Compulsory Safety Mode: {self.compulsory_safety_mode.upper()}")
         else:
             print(f"Model: {self.large_model}")
-        print(f"Improved Prompts: {'ON' if self.use_improved_prompts else 'OFF'}")
         print(f"{'='*70}\n")
 
         # Load questions

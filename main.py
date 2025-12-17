@@ -28,11 +28,11 @@ Examples:
   # Save predictions
   python main.py --strategy hybrid --save-predictions
   
-  # Enable safety classifier (keyword mode - fast)
-  python main.py --strategy hybrid --safety-mode keyword
+  # COMPULSORY safety mode (keyword - fast, default)
+  python main.py --strategy hybrid --compulsory-safety-mode keyword
   
-  # Enable safety classifier (model mode - accurate)
-  python main.py --strategy hybrid --safety-mode model
+  # COMPULSORY safety mode (model - accurate)
+  python main.py --strategy hybrid --compulsory-safety-mode model
         """,
     )
 
@@ -109,18 +109,13 @@ Examples:
         help="Output directory (default: current directory)",
     )
 
-    # Prompt arguments
+    # Safety arguments for COMPULSORY questions
     parser.add_argument(
-        "--no-improved-prompts", action="store_true", help="Disable improved prompts"
-    )
-
-    # Safety arguments
-    parser.add_argument(
-        "--safety-mode",
+        "--compulsory-safety-mode",
         type=str,
-        default="none",
-        choices=["none", "keyword", "model"],
-        help="Safety check mode: none (disabled), keyword (fast), model (accurate) (default: none)",
+        default="keyword",
+        choices=["keyword", "model"],
+        help="Safety check mode for COMPULSORY questions: keyword (fast, default), model (accurate)",
     )
 
     args = parser.parse_args()
@@ -138,8 +133,7 @@ Examples:
         model_provider=args.provider,
         large_model=args.large_model,
         small_model=args.small_model,
-        use_improved_prompts=not args.no_improved_prompts,
-        safety_mode=args.safety_mode,
+        compulsory_safety_mode=args.compulsory_safety_mode,
     )
 
     # Run evaluation

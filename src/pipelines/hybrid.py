@@ -1,4 +1,4 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from src.components import (
     AnswerExtractor,
@@ -6,17 +6,10 @@ from src.components import (
     QuestionClassifier,
     SafetyClassifier,
     SemanticContextFilter,
+    PromptSelector,
+    QdrantRetriever,
 )
-from src.utils import (DynamicChoicesFormatter, QuestionDifficulty)
-
-try:
-    from src.components import PromptSelector
-
-    USE_IMPROVED_PROMPTS = True
-except ImportError:
-    from src.components import PromptBuilder
-
-    USE_IMPROVED_PROMPTS = False
+from src.utils import DynamicChoicesFormatter, QuestionDifficulty
 
 
 class ConfidenceScorer:
@@ -57,6 +50,10 @@ class ConfidenceScorer:
 
 
 class HybridModelSelector:
+    """
+    Lựa chọn model phù hợp cho 5 loại câu hỏi mới:
+    RAG, COMPULSORY, STEM, PRECISION_CRITICAL, MULTI_DOMAIN
+    """
 
     @staticmethod
     def select_model(
@@ -64,58 +61,73 @@ class HybridModelSelector:
         difficulty: str,
         context_length: int = 0,
         strategy: str = "hybrid",
+        subtype: str = "general",
     ) -> str:
 
         if strategy == "cost-optimized":
             return HybridModelSelector._cost_optimized(
-                question_type, difficulty, context_length
+                question_type, difficulty, context_length, subtype
             )
         elif strategy == "quality-optimized":
             return HybridModelSelector._quality_optimized(
-                question_type, difficulty, context_length
+                question_type, difficulty, context_length, subtype
             )
         else:  # hybrid (default)
             return HybridModelSelector._hybrid_strategy(
-                question_type, difficulty, context_length
+                question_type, difficulty, context_length, subtype
             )
 
     @staticmethod
     def _cost_optimized(
-        question_type: str, difficulty: str, context_length: int
+        question_type: str, difficulty: str, context_length: int, subtype: str
     ) -> str:
         """Chiến lược tối ưu chi phí"""
-        if question_type == "MATH":
-            return "large"  # MATH luôn cần large
-        elif question_type == "CONTEXT":
+        if question_type in ["STEM", "PRECISION_CRITICAL"]:
+            return "large"  # Cần độ chính xác cao
+        elif question_type == "COMPULSORY":
+            return "large"  # An toàn quan trọng
+        elif question_type == "RAG":
             return "small"  # Context đã filter, small đủ
-        elif question_type == "KNOWLEDGE":
-            return difficulty
+        elif question_type == "MULTI_DOMAIN":
+            return difficulty  # Dựa vào độ khó
         return "small"
 
     @staticmethod
     def _quality_optimized(
-        question_type: str, difficulty: str, context_length: int
+        question_type: str, difficulty: str, context_length: int, subtype: str
     ) -> str:
+        """Chiến lược tối ưu chất lượng"""
         return "large"  # Tất cả dùng large
 
     @staticmethod
     def _hybrid_strategy(
-        question_type: str, difficulty: str, context_length: int
+        question_type: str, difficulty: str, context_length: int, subtype: str
     ) -> str:
-        # MATH: Luôn large
-        if question_type == "MATH":
+        """Chiến lược cân bằng (mặc định)"""
+
+        # STEM: Luôn large (độ chính xác quan trọng)
+        if question_type == "STEM":
             return "large"
 
-        # CONTEXT: Dựa vào độ dài
-        elif question_type == "CONTEXT":
+        # PRECISION_CRITICAL: Luôn large (độ chính xác tuyệt đối)
+        elif question_type == "PRECISION_CRITICAL":
+            return "large"
+
+        # COMPULSORY: Luôn large (an toàn quan trọng)
+        elif question_type == "COMPULSORY":
+            return "large"
+
+        # RAG: Dựa vào độ dài context
+        elif question_type == "RAG":
             if context_length < 1000:
                 return "small"
             else:
                 return "large"
 
-        # KNOWLEDGE: Dựa vào độ khó
-        elif question_type == "KNOWLEDGE":
-            if difficulty == "large":
+        # MULTI_DOMAIN: Dựa vào độ khó và subtype
+        elif question_type == "MULTI_DOMAIN":
+            # Triết học, lịch sử phức tạp → large
+            if subtype in ["triết học", "lịch sử"] or difficulty == "large":
                 return "large"
             else:
                 return "small_with_fallback"
@@ -131,10 +143,12 @@ class HybridPipeline:
     def __init__(
         self,
         strategy: str = "hybrid",
-        use_improved_prompts: bool = True,
         large_model_name: str = "large",
         small_model_name: str = "small",
-        safety_mode: str = "none",
+        compulsory_safety_mode: str = "keyword",
+        use_qdrant_rag: bool = True,
+        qdrant_top_k: int = 5,
+        qdrant_max_chars: int = 2000,
     ):
         """
         Args:
@@ -142,31 +156,41 @@ class HybridPipeline:
                      - "cost-optimized": Tối ưu chi phí
                      - "quality-optimized": Tối ưu chất lượng
                      - "hybrid": Cân bằng (mặc định)
-            use_improved_prompts: Sử dụng improved prompts (mặc định: True)
             large_model_name: Tên large model (default: "large" cho VNPT, "gpt-4o-mini" cho OpenAI)
             small_model_name: Tên small model (default: "small" cho VNPT, "gpt-3.5-turbo" cho OpenAI)
-            safety_mode: Chế độ safety check
-                        - "none": Tắt safety check (mặc định)
-                        - "keyword": Dùng keyword matching (nhanh)
-                        - "model": Dùng model verification (chính xác)
+            compulsory_safety_mode: Chế độ safety check cho câu hỏi COMPULSORY
+                        - "keyword": Dùng keyword matching (nhanh, mặc định)
+                        - "model": Dùng model verification (chính xác hơn)
+            use_qdrant_rag: Có sử dụng Qdrant RAG cho COMPULSORY và MULTI_DOMAIN không
+            qdrant_top_k: Số documents lấy từ Qdrant
+            qdrant_max_chars: Độ dài tối đa của context từ Qdrant
         """
         self.strategy = strategy
-        self.use_improved_prompts = use_improved_prompts and USE_IMPROVED_PROMPTS
         self.large_model_name = large_model_name
         self.small_model_name = small_model_name
         self.small_model = None  # Lazy loading
         self.large_model = None  # Lazy loading
-        self.safety_mode = safety_mode
+        self.compulsory_safety_mode = compulsory_safety_mode
+        self.use_qdrant_rag = use_qdrant_rag
+        self.qdrant_top_k = qdrant_top_k
+        self.qdrant_max_chars = qdrant_max_chars
 
         self.classifier = QuestionClassifier()
         self.context_filter = SemanticContextFilter()
         self.safety_classifier = SafetyClassifier()
+        self.prompt_selector = PromptSelector()
 
-        # Use improved prompts if available
-        if self.use_improved_prompts:
-            self.prompt_selector = PromptSelector()
-        else:
-            self.prompt_builder = PromptBuilder()
+        # Khởi tạo QdrantRetriever nếu cần
+        self.qdrant_retriever = None
+        if self.use_qdrant_rag:
+            try:
+                print("Initializing QdrantRetriever...")
+                self.qdrant_retriever = QdrantRetriever()
+                print("✓ QdrantRetriever initialized successfully")
+            except Exception as e:
+                print(f"⚠️ Warning: Could not initialize QdrantRetriever: {e}")
+                print("Continuing without Qdrant RAG support...")
+                self.use_qdrant_rag = False
 
         self.answer_extractor = AnswerExtractor()
         self.confidence_scorer = ConfidenceScorer()
@@ -178,7 +202,8 @@ class HybridPipeline:
             "large_used": 0,
             "fallback_triggered": 0,
             "rate_limit_fallback": 0,
-            "safety_detected": 0,
+            "compulsory_detected": 0,
+            "qdrant_rag_used": 0,
             "total_processed": 0,
         }
 
@@ -192,6 +217,175 @@ class HybridPipeline:
             if self.large_model is None:
                 self.large_model = ModelWrapper(model_type=self.large_model_name)
             return self.large_model
+
+    def _process_compulsory_question(
+        self,
+        qid: str,
+        question: str,
+        choices: List[str],
+        ground_truth: str = None,
+        subtype: str = "safety",
+        verbose: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Xử lý câu hỏi COMPULSORY (Safety/Refusal/Law)
+        Sử dụng safety_classifier và Qdrant RAG
+        """
+        if verbose:
+            print(f"🔒 Processing COMPULSORY question (subtype={subtype})")
+
+        # Xác định có dùng model verification không
+        use_model_verification = self.compulsory_safety_mode == "model"
+
+        # Nếu dùng model verification, cần model_wrapper
+        model_wrapper = None
+        if use_model_verification:
+            model_wrapper = self._get_model("small")
+
+        # Gọi safety classifier
+        safety_result = self.safety_classifier.classify_safety(
+            question=question,
+            choices=choices,
+            model_wrapper=model_wrapper,
+            verbose=verbose,
+            use_model_verification=use_model_verification,
+        )
+
+        if not safety_result["is_safe"]:
+            # Có đáp án unsafe/refusal trong choices → chọn luôn đáp án đó
+            if verbose:
+                print("⚠️ Safety/Refusal answer detected in choices!")
+                print(f"Auto-selecting answer: {safety_result['unsafe_answer']}")
+
+            self.stats["compulsory_detected"] += 1
+            self.stats["total_processed"] += 1
+
+            result = {
+                "qid": qid,
+                "predicted": safety_result["unsafe_answer"],
+                "raw_response": f"COMPULSORY: {safety_result.get('raw_response', 'keyword_detected')}",
+                "model_used": "safety_classifier",
+                "confidence": safety_result["confidence"],
+                "ground_truth": ground_truth,
+                "type": "COMPULSORY",
+                "subtype": subtype,
+                "difficulty": "compulsory",
+                "extraction_failed": False,
+                "safety_method": safety_result["method"],
+                "qdrant_used": False,
+            }
+
+            if ground_truth:
+                result["correct"] = result["predicted"] == ground_truth
+            else:
+                result["correct"] = None
+
+            return result
+
+        # Nếu không phát hiện được đáp án refusal rõ ràng, dùng model với RAG
+        if verbose:
+            print("No clear refusal answer detected, using model with RAG...")
+
+        # Retrieve context từ Qdrant
+        qdrant_context = self._retrieve_qdrant_context(
+            question=question,
+            question_type="COMPULSORY",
+            subtype=subtype,
+            verbose=verbose,
+        )
+
+        # Build prompt cho COMPULSORY với context (nếu có)
+        prompt = self.prompt_selector.select_prompt(
+            question_type="COMPULSORY",
+            question=question,
+            choices=choices,
+            context=qdrant_context,
+            subtype=subtype,
+            model_type="large",
+        )
+
+        # Gọi large model (COMPULSORY cần độ chính xác cao)
+        result = self._get_model_response(
+            model_type="large",
+            prompt=prompt,
+            question_type="COMPULSORY",
+            choices=choices,
+            verbose=verbose,
+        )
+
+        # Add metadata
+        result["qid"] = qid
+        result["ground_truth"] = ground_truth
+        result["type"] = "COMPULSORY"
+        result["subtype"] = subtype
+        result["difficulty"] = "compulsory"
+        result["qdrant_used"] = qdrant_context is not None
+
+        if ground_truth and result["predicted"]:
+            result["correct"] = result["predicted"] == ground_truth
+        else:
+            result["correct"] = None
+
+        self.stats["compulsory_detected"] += 1
+        self.stats["total_processed"] += 1
+
+        return result
+
+    def _retrieve_qdrant_context(
+        self,
+        question: str,
+        question_type: str,
+        subtype: str,
+        verbose: bool = False,
+    ) -> Optional[str]:
+        """
+        Retrieve context từ Qdrant cho các câu hỏi COMPULSORY và MULTI_DOMAIN
+
+        Returns:
+            Context string hoặc None nếu không retrieve được
+        """
+        if not self.use_qdrant_rag or self.qdrant_retriever is None:
+            return None
+
+        # Chỉ retrieve cho COMPULSORY và MULTI_DOMAIN
+        if question_type not in ["COMPULSORY", "MULTI_DOMAIN"]:
+            return None
+
+        try:
+            if verbose:
+                print(
+                    f"📚 Retrieving context from Qdrant (type={question_type}, subtype={subtype})..."
+                )
+
+            rag_result = self.qdrant_retriever.retrieve_and_format(
+                question=question,
+                question_type=question_type,
+                subtype=subtype,
+                top_k=self.qdrant_top_k,
+                max_chars=self.qdrant_max_chars,
+                include_scores=False,
+            )
+
+            context = rag_result.get("context", "")
+
+            if context and context.strip():
+                self.stats["qdrant_rag_used"] += 1
+
+                if verbose:
+                    print(f"✓ Retrieved {rag_result['num_documents']} documents")
+                    print(f"  Avg score: {rag_result['avg_score']:.4f}")
+                    print(f"  Context length: {len(context)} chars")
+
+                return context
+            else:
+                if verbose:
+                    print("⚠️ No relevant context found in Qdrant")
+                return None
+
+        except Exception as e:
+            if verbose:
+                print(f"⚠️ Error retrieving from Qdrant: {e}")
+            return None
 
     def process_single(
         self, item: Dict[str, Any], verbose: bool = False
@@ -209,72 +403,39 @@ class HybridPipeline:
             print(f"QID: {qid}")
             print(f"Question: {question[:100]}...")
 
-        # 0. Safety check - Chỉ chạy nếu safety_mode != "none"
-        if self.safety_mode != "none":
-            # Xác định có dùng model verification không
-            use_model_verification = self.safety_mode == "model"
+        # 1. Phân loại câu hỏi (với choices để detect COMPULSORY)
+        classification = self.classifier.classify(question, choices)
+        question_type = classification["type"]
+        subtype = classification.get("subtype", "general")
 
-            # Nếu dùng model verification, cần model_wrapper
-            model_wrapper = None
-            if use_model_verification:
-                model_wrapper = self._get_model("small")
-
-            safety_result = self.safety_classifier.classify_safety(
+        # 2. Xử lý đặc biệt cho COMPULSORY (Safety/Refusal)
+        if question_type == "COMPULSORY":
+            return self._process_compulsory_question(
+                qid=qid,
                 question=question,
                 choices=choices,
-                model_wrapper=model_wrapper,
+                ground_truth=ground_truth,
+                subtype=subtype,
                 verbose=verbose,
-                use_model_verification=use_model_verification,
             )
 
-            if not safety_result["is_safe"]:
-                # Có đáp án unsafe trong choices → chọn luôn đáp án đó
-                if verbose:
-                    print("⚠️ UNSAFE answer detected in choices!")
-                    print(f"Auto-selecting answer: {safety_result['unsafe_answer']}")
-
-                self.stats["safety_detected"] += 1
-                # Không tăng small_used vì không gọi model
-                self.stats["total_processed"] += 1
-
-                result = {
-                    "qid": qid,
-                    "predicted": safety_result["unsafe_answer"],
-                    "raw_response": f"UNSAFE: {safety_result.get('raw_response', 'keyword_detected')}",
-                    "model_used": "safety_classifier",
-                    "confidence": safety_result["confidence"],
-                    "ground_truth": ground_truth,
-                    "type": "UNSAFE",
-                    "difficulty": "safety",
-                    "extraction_failed": False,
-                    "safety_method": safety_result["method"],
-                }
-
-                if ground_truth:
-                    result["correct"] = result["predicted"] == ground_truth
-                else:
-                    result["correct"] = None
-
-                return result
-
-        # 1. Phân loại câu hỏi
-        classification = self.classifier.classify(question)
-        question_type = classification["type"]
-
-        # 2. Phân loại độ khó
+        # 3. Phân loại độ khó
         difficulty = QuestionDifficulty.classify_difficulty(item)
 
-        # 3. Xử lý context (nếu có)
+        # 4. Xử lý context
         context_length = 0
-        if question_type == "CONTEXT":
-            context = classification["context"]
+        qdrant_context = None
+
+        # 4a. Nếu là RAG (có context sẵn)
+        if question_type == "RAG":
+            context = classification.get("context", "")
             context_length = len(context)
 
             # Apply semantic filtering cho context dài
             if context_length > 10000:
                 filtered_context, metadata = self.context_filter.filter_context(
                     context=context,
-                    question=classification["question"],
+                    question=classification.get("question", question),
                     max_chunks=4,
                     max_chars=1000,
                 )
@@ -286,50 +447,53 @@ class HybridPipeline:
                         f"Context filtered: {metadata['original_length']} → {metadata['filtered_length']} chars"
                     )
 
-        # 4. Chọn model
+        # 4b. Nếu là MULTI_DOMAIN, retrieve context từ Qdrant
+        elif question_type == "MULTI_DOMAIN":
+            qdrant_context = self._retrieve_qdrant_context(
+                question=question,
+                question_type=question_type,
+                subtype=subtype,
+                verbose=verbose,
+            )
+            if qdrant_context:
+                context_length = len(qdrant_context)
+
+        # 5. Chọn model
         selected_model = HybridModelSelector.select_model(
             question_type=question_type,
             difficulty=difficulty,
             context_length=context_length,
             strategy=self.strategy,
+            subtype=subtype,
         )
 
         if verbose:
-            print(f"Type: {question_type}, Difficulty: {difficulty}")
+            print(
+                f"Type: {question_type}, Subtype: {subtype}, Difficulty: {difficulty}"
+            )
             print(f"Selected model: {selected_model}")
 
-        # 5. Build prompt
-        if self.use_improved_prompts:
-            # Use improved prompt selector
-            prompt = self.prompt_selector.select_prompt(
-                question_type=question_type,
-                question=classification.get("question", question),
-                choices=choices,
-                context=classification.get("context"),
-                model_type=(
-                    selected_model
-                    if selected_model != "small_with_fallback"
-                    else "small"
-                ),
-            )
+        # 6. Build prompt
+        # Chọn context phù hợp
+        if question_type == "RAG":
+            context = classification.get("context")
+        elif question_type == "MULTI_DOMAIN":
+            context = qdrant_context
         else:
-            # Use original prompt builder
-            if question_type == "CONTEXT":
-                prompt = self.prompt_builder.build_context_prompt(
-                    context=classification["context"],
-                    question=classification["question"],
-                    choices=choices,
-                )
-            elif question_type == "MATH":
-                prompt = self.prompt_builder.build_math_prompt(
-                    question=classification["question"], choices=choices
-                )
-            else:  # KNOWLEDGE
-                prompt = self.prompt_builder.build_knowledge_prompt(
-                    question=classification["question"], choices=choices
-                )
+            context = None
 
-        # 6. Get response
+        prompt = self.prompt_selector.select_prompt(
+            question_type=question_type,
+            question=classification.get("question", question),
+            choices=choices,
+            context=context,
+            subtype=subtype,
+            model_type=(
+                selected_model if selected_model != "small_with_fallback" else "small"
+            ),
+        )
+
+        # 7. Get response
         if selected_model == "small_with_fallback":
             result = self._process_with_fallback(
                 prompt=prompt,
@@ -346,11 +510,13 @@ class HybridPipeline:
                 verbose=verbose,
             )
 
-        # 7. Add metadata
+        # 8. Add metadata
         result["qid"] = qid
         result["ground_truth"] = ground_truth
         result["type"] = question_type
+        result["subtype"] = subtype
         result["difficulty"] = difficulty
+        result["qdrant_used"] = qdrant_context is not None
 
         # Check correctness
         if ground_truth and result["predicted"]:
@@ -381,10 +547,16 @@ class HybridPipeline:
         model = self._get_model(model_type)
 
         # Adjust parameters based on question type
-        if question_type == "MATH":
+        if question_type in ["STEM", "PRECISION_CRITICAL"]:
+            # Cần nhiều token hơn cho tính toán và giải thích
             max_tokens = 1024
-            temperature = 0.05
+            temperature = 0.05  # Nhiệt độ thấp cho độ chính xác cao
+        elif question_type == "COMPULSORY":
+            # Cần ổn định và an toàn
+            max_tokens = 512
+            temperature = 0.0  # Không có ngẫu nhiên
         else:
+            # RAG, MULTI_DOMAIN
             max_tokens = 256
             temperature = 0.1
 
@@ -409,7 +581,7 @@ class HybridPipeline:
             )
 
             if not is_valid:
-                model = self._get_model('small')
+                model = self._get_model("small")
                 response = model.get_completion(
                     prompt=prompt, temperature=temperature, max_tokens=max_tokens
                 )
@@ -543,5 +715,5 @@ class HybridPipeline:
             "large_percentage": f"{self.stats['large_used']/total*100:.1f}%",
             "fallback_rate": f"{self.stats['fallback_triggered']/total*100:.1f}%",
             "rate_limit_fallback_rate": f"{self.stats['rate_limit_fallback']/total*100:.1f}%",
-            "safety_detection_rate": f"{self.stats['safety_detected']/total*100:.1f}%",
+            "compulsory_detection_rate": f"{self.stats['compulsory_detected']/total*100:.1f}%",
         }
