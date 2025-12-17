@@ -6,17 +6,10 @@ from src.components import (
     QuestionClassifier,
     SafetyClassifier,
     SemanticContextFilter,
+    PromptSelector,
+    QdrantRetriever,
 )
-from src.utils import (DynamicChoicesFormatter, QuestionDifficulty)
-
-try:
-    from src.components import PromptSelector
-
-    USE_IMPROVED_PROMPTS = True
-except ImportError:
-    from src.components import PromptBuilder
-
-    USE_IMPROVED_PROMPTS = False
+from src.utils import DynamicChoicesFormatter, QuestionDifficulty
 
 
 class ConfidenceScorer:
@@ -131,10 +124,12 @@ class HybridPipeline:
     def __init__(
         self,
         strategy: str = "hybrid",
-        use_improved_prompts: bool = True,
         large_model_name: str = "large",
         small_model_name: str = "small",
         safety_mode: str = "none",
+        use_rag: bool = True,
+        rag_top_k: int = 5,
+        rag_max_chars: int = 2000,
     ):
         """
         Args:
@@ -142,31 +137,33 @@ class HybridPipeline:
                      - "cost-optimized": Tối ưu chi phí
                      - "quality-optimized": Tối ưu chất lượng
                      - "hybrid": Cân bằng (mặc định)
-            use_improved_prompts: Sử dụng improved prompts (mặc định: True)
             large_model_name: Tên large model (default: "large" cho VNPT, "gpt-4o-mini" cho OpenAI)
             small_model_name: Tên small model (default: "small" cho VNPT, "gpt-3.5-turbo" cho OpenAI)
             safety_mode: Chế độ safety check
                         - "none": Tắt safety check (mặc định)
                         - "keyword": Dùng keyword matching (nhanh)
                         - "model": Dùng model verification (chính xác)
+            use_rag: Sử dụng RAG retrieval cho câu hỏi KNOWLEDGE (mặc định: True)
+            rag_top_k: Số lượng documents truy xuất từ RAG (mặc định: 5)
+            rag_max_chars: Số ký tự tối đa cho RAG context (mặc định: 2000)
         """
         self.strategy = strategy
-        self.use_improved_prompts = use_improved_prompts and USE_IMPROVED_PROMPTS
         self.large_model_name = large_model_name
         self.small_model_name = small_model_name
         self.small_model = None  # Lazy loading
         self.large_model = None  # Lazy loading
         self.safety_mode = safety_mode
+        self.use_rag = use_rag
+        self.rag_top_k = rag_top_k
+        self.rag_max_chars = rag_max_chars
 
         self.classifier = QuestionClassifier()
         self.context_filter = SemanticContextFilter()
         self.safety_classifier = SafetyClassifier()
+        self.prompt_selector = PromptSelector()
 
-        # Use improved prompts if available
-        if self.use_improved_prompts:
-            self.prompt_selector = PromptSelector()
-        else:
-            self.prompt_builder = PromptBuilder()
+        # Lazy loading RAG retriever
+        self.rag_retriever = None
 
         self.answer_extractor = AnswerExtractor()
         self.confidence_scorer = ConfidenceScorer()
@@ -179,6 +176,7 @@ class HybridPipeline:
             "fallback_triggered": 0,
             "rate_limit_fallback": 0,
             "safety_detected": 0,
+            "rag_used": 0,
             "total_processed": 0,
         }
 
@@ -192,6 +190,12 @@ class HybridPipeline:
             if self.large_model is None:
                 self.large_model = ModelWrapper(model_type=self.large_model_name)
             return self.large_model
+
+    def _get_rag_retriever(self) -> QdrantRetriever:
+        """Lazy loading RAG retriever"""
+        if self.rag_retriever is None:
+            self.rag_retriever = QdrantRetriever()
+        return self.rag_retriever
 
     def process_single(
         self, item: Dict[str, Any], verbose: bool = False
@@ -260,12 +264,15 @@ class HybridPipeline:
         # 1. Phân loại câu hỏi
         classification = self.classifier.classify(question)
         question_type = classification["type"]
+        subtype = classification.get("subtype", "general")
 
         # 2. Phân loại độ khó
         difficulty = QuestionDifficulty.classify_difficulty(item)
 
         # 3. Xử lý context (nếu có)
         context_length = 0
+        rag_context = None
+
         if question_type == "CONTEXT":
             context = classification["context"]
             context_length = len(context)
@@ -286,6 +293,38 @@ class HybridPipeline:
                         f"Context filtered: {metadata['original_length']} → {metadata['filtered_length']} chars"
                     )
 
+        # 3b. RAG retrieval cho KNOWLEDGE questions
+        elif question_type == "KNOWLEDGE" and self.use_rag:
+            if verbose:
+                print(f"\n🔍 RAG Retrieval for KNOWLEDGE question (subtype: {subtype})")
+
+            try:
+                retriever = self._get_rag_retriever()
+                rag_result = retriever.retrieve_and_format(
+                    question=question,
+                    question_type="MULTI_DOMAIN",  # Map KNOWLEDGE to MULTI_DOMAIN for RAG
+                    subtype=subtype,
+                    top_k=self.rag_top_k,
+                    max_chars=self.rag_max_chars,
+                    include_scores=False,
+                )
+
+                rag_context = rag_result["context"]
+
+                if verbose and rag_context:
+                    print(f"✅ RAG retrieved {rag_result['num_documents']} documents")
+                    print(f"   Avg score: {rag_result['avg_score']:.3f}")
+                    print(f"   Domains: {', '.join(rag_result['domains'])}")
+                    print(f"   Context length: {len(rag_context)} chars")
+
+                if rag_context:
+                    self.stats["rag_used"] += 1
+
+            except Exception as e:
+                if verbose:
+                    print(f"⚠️ RAG retrieval failed: {e}")
+                rag_context = None
+
         # 4. Chọn model
         selected_model = HybridModelSelector.select_model(
             question_type=question_type,
@@ -298,36 +337,23 @@ class HybridPipeline:
             print(f"Type: {question_type}, Difficulty: {difficulty}")
             print(f"Selected model: {selected_model}")
 
-        # 5. Build prompt
-        if self.use_improved_prompts:
-            # Use improved prompt selector
-            prompt = self.prompt_selector.select_prompt(
-                question_type=question_type,
-                question=classification.get("question", question),
-                choices=choices,
-                context=classification.get("context"),
-                model_type=(
-                    selected_model
-                    if selected_model != "small_with_fallback"
-                    else "small"
-                ),
-            )
-        else:
-            # Use original prompt builder
-            if question_type == "CONTEXT":
-                prompt = self.prompt_builder.build_context_prompt(
-                    context=classification["context"],
-                    question=classification["question"],
-                    choices=choices,
-                )
-            elif question_type == "MATH":
-                prompt = self.prompt_builder.build_math_prompt(
-                    question=classification["question"], choices=choices
-                )
-            else:  # KNOWLEDGE
-                prompt = self.prompt_builder.build_knowledge_prompt(
-                    question=classification["question"], choices=choices
-                )
+        # 5. Build prompt with PromptSelector
+        # Xác định context để truyền vào prompt
+        prompt_context = None
+        if question_type == "CONTEXT":
+            prompt_context = classification.get("context")
+        elif question_type == "KNOWLEDGE" and rag_context:
+            prompt_context = rag_context
+
+        prompt = self.prompt_selector.select_prompt(
+            question_type=question_type,
+            question=classification.get("question", question),
+            choices=choices,
+            context=prompt_context,
+            model_type=(
+                selected_model if selected_model != "small_with_fallback" else "small"
+            ),
+        )
 
         # 6. Get response
         if selected_model == "small_with_fallback":
@@ -409,7 +435,7 @@ class HybridPipeline:
             )
 
             if not is_valid:
-                model = self._get_model('small')
+                model = self._get_model("small")
                 response = model.get_completion(
                     prompt=prompt, temperature=temperature, max_tokens=max_tokens
                 )
@@ -544,4 +570,5 @@ class HybridPipeline:
             "fallback_rate": f"{self.stats['fallback_triggered']/total*100:.1f}%",
             "rate_limit_fallback_rate": f"{self.stats['rate_limit_fallback']/total*100:.1f}%",
             "safety_detection_rate": f"{self.stats['safety_detected']/total*100:.1f}%",
+            "rag_usage_rate": f"{self.stats['rag_used']/total*100:.1f}%",
         }

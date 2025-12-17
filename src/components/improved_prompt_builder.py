@@ -119,9 +119,22 @@ Các lựa chọn hợp lệ: {valid_labels}.
 - Toàn bộ phản hồi ngắn gọn, không vượt quá yêu cầu, tập trung vào tính chính xác."""
 
     @staticmethod
-    def build_knowledge_prompt_improved(question: str, choices: List[str]) -> str:
+    def build_knowledge_prompt_improved(
+        question: str, choices: List[str], context: str = None
+    ) -> str:
         choices_text = DynamicChoicesFormatter.format_choices(choices)
         valid_labels = DynamicChoicesFormatter.get_valid_labels(choices)
+
+        # Nếu có RAG context, thêm vào prompt
+        context_section = ""
+        if context and context.strip():
+            context_section = f"""
+**Thông tin tham khảo từ cơ sở tri thức:**
+<ngữ cảnh>
+{context}
+</ngữ cảnh>
+
+"""
 
         return f"""**Vai trò:**  
 Bạn là một chuyên gia kiến thức Việt Nam, am hiểu sâu sắc về văn hóa, lịch sử, địa lý và pháp luật Việt Nam. Bạn trả lời các câu hỏi trắc nghiệm một cách chính xác, logic và ngắn gọn.
@@ -132,7 +145,7 @@ Xác định và chọn đáp án đúng duy nhất từ các lựa chọn hợp
 **Bối cảnh:**  
 Câu hỏi được đặt trong bối cảnh kiến thức Việt Nam, bao gồm các lĩnh vực văn hóa (truyền thống, phong tục), lịch sử (sự kiện, nhân vật), địa lý (địa danh, đặc trưng) và pháp luật (luật lệ, quy định hiện hành). Các lựa chọn được cung cấp dưới dạng văn bản, và chỉ sử dụng các nhãn hợp lệ được chỉ định để trả lời.
 
-Dựa trên kiến thức Việt Nam (Văn hóa – Lịch sử – Địa lý – Pháp luật).  
+{context_section}Dựa trên kiến thức Việt Nam (Văn hóa – Lịch sử – Địa lý – Pháp luật).  
 
 <câu hỏi>  
 {question}  
@@ -146,10 +159,11 @@ Các lựa chọn hợp lệ: {valid_labels}.
 
 **Hướng dẫn:**  
 1. Đọc kỹ câu hỏi trong phần <câu hỏi>.  
-2. Phân tích các lựa chọn trong phần <những lựa chọn>, chỉ xem xét các nhãn hợp lệ được liệt kê (ví dụ: A, B, C).  
-3. Dựa trên kiến thức Việt Nam, suy luận logic để chọn đáp án đúng, chỉ viết 1-2 dòng nếu cần giải thích ngắn gọn, tránh phân tích dài dòng.  
-4. Chọn và trả lời bằng đúng 1 chữ cái từ các lựa chọn hợp lệ.  
-5. Kết thúc bằng từ "Đáp án:" theo sau là chữ cái đã chọn.
+2. {"Tham khảo thông tin từ phần <ngữ cảnh> nếu có." if context else ""}
+3. Phân tích các lựa chọn trong phần <những lựa chọn>, chỉ xem xét các nhãn hợp lệ được liệt kê (ví dụ: A, B, C).  
+4. Dựa trên kiến thức Việt Nam và thông tin tham khảo, suy luận logic để chọn đáp án đúng, chỉ viết 1-2 dòng nếu cần giải thích ngắn gọn, tránh phân tích dài dòng.  
+5. Chọn và trả lời bằng đúng 1 chữ cái từ các lựa chọn hợp lệ.  
+6. Kết thúc bằng từ "Đáp án:" theo sau là chữ cái đã chọn.
 
 **Định dạng đầu ra:**  
 - Suy luận logic (nếu cần): 1-2 dòng ngắn gọn.  
@@ -159,10 +173,21 @@ Các lựa chọn hợp lệ: {valid_labels}.
 
     @staticmethod
     def build_knowledge_prompt_with_confidence(
-        question: str, choices: List[str]
+        question: str, choices: List[str], context: str = None
     ) -> str:
         choices_text = DynamicChoicesFormatter.format_choices(choices)
         valid_labels = DynamicChoicesFormatter.get_valid_labels(choices)
+
+        # Nếu có RAG context, thêm vào prompt
+        context_section = ""
+        if context and context.strip():
+            context_section = f"""
+**Thông tin tham khảo từ cơ sở tri thức:**
+<ngữ cảnh>
+{context}
+</ngữ cảnh>
+
+"""
 
         return f"""**Vai trò:**  
 Bạn là một chuyên gia kiến thức Việt Nam, am hiểu sâu sắc về văn hóa, lịch sử, địa lý và pháp luật Việt Nam. Bạn trả lời các câu hỏi trắc nghiệm một cách chính xác, logic và ngắn gọn.
@@ -173,7 +198,7 @@ Xác định và chọn đáp án đúng duy nhất từ các lựa chọn hợp
 **Bối cảnh:**  
 Câu hỏi được đặt trong bối cảnh kiến thức Việt Nam, bao gồm các lĩnh vực văn hóa (truyền thống, phong tục), lịch sử (sự kiện, nhân vật), địa lý (địa danh, đặc trưng) và pháp luật (luật lệ, quy định hiện hành). Các lựa chọn được cung cấp dưới dạng văn bản, và chỉ sử dụng các nhãn hợp lệ được chỉ định để trả lời.
 
-Dựa trên kiến thức Việt Nam (Văn hóa – Lịch sử – Địa lý – Pháp luật).  
+{context_section}Dựa trên kiến thức Việt Nam (Văn hóa – Lịch sử – Địa lý – Pháp luật).  
 
 <câu hỏi>  
 {question}  
@@ -187,10 +212,11 @@ Các lựa chọn hợp lệ: {valid_labels}.
 
 **Hướng dẫn:**  
 1. Đọc kỹ câu hỏi trong phần <câu hỏi>.  
-2. Phân tích các lựa chọn trong phần <những lựa chọn>, chỉ xem xét các nhãn hợp lệ được liệt kê (ví dụ: A, B, C).  
-3. Dựa trên kiến thức Việt Nam, suy luận logic để chọn đáp án đúng, chỉ viết 1-2 dòng nếu cần giải thích ngắn gọn, tránh phân tích dài dòng.  
-4. Chọn và trả lời bằng đúng 1 chữ cái từ các lựa chọn hợp lệ.  
-5. Kết thúc bằng từ "Đáp án:" theo sau là chữ cái đã chọn.
+2. {"Tham khảo thông tin từ phần <ngữ cảnh> nếu có." if context else ""}
+3. Phân tích các lựa chọn trong phần <những lựa chọn>, chỉ xem xét các nhãn hợp lệ được liệt kê (ví dụ: A, B, C).  
+4. Dựa trên kiến thức Việt Nam và thông tin tham khảo, suy luận logic để chọn đáp án đúng, chỉ viết 1-2 dòng nếu cần giải thích ngắn gọn, tránh phân tích dài dòng.  
+5. Chọn và trả lời bằng đúng 1 chữ cái từ các lựa chọn hợp lệ.  
+6. Kết thúc bằng từ "Đáp án:" theo sau là chữ cái đã chọn.
 
 **Định dạng đầu ra:**  
 - Suy luận logic (nếu cần): 1-2 dòng ngắn gọn.  
@@ -272,13 +298,17 @@ class PromptSelector:
         elif question_type == "KNOWLEDGE":
             if model_type == "small":
                 # Small model cần confidence scoring
-                return builder.build_knowledge_prompt_with_confidence(question, choices)
+                return builder.build_knowledge_prompt_with_confidence(
+                    question, choices, context
+                )
             else:
                 # Large model dùng prompt cải tiến
-                return builder.build_knowledge_prompt_improved(question, choices)
+                return builder.build_knowledge_prompt_improved(
+                    question, choices, context
+                )
 
         # Fallback
-        return builder.build_knowledge_prompt_improved(question, choices)
+        return builder.build_knowledge_prompt_improved(question, choices, context)
 
 
 # Backward compatibility
